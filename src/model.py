@@ -1,3 +1,6 @@
+# Yanting Lai
+# CS5330
+# Date: November-19-2024
 # model.py
 # Description: Define the MyNetwork class
 

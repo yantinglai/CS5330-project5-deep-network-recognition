@@ -1,10 +1,15 @@
+# Yanting Lai
+# CS5330
+# Date: November-19-2024
+# Description: examine_network.py
+
 import os
 import torch
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from torchvision import datasets, transforms
-from model import MyNetwork  # Import your network class
+from model import MyNetwork
 
 
 def analyze_first_layer(model):

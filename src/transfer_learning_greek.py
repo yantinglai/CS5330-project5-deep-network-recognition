@@ -1,3 +1,8 @@
+# Yanting Lai
+# CS5330
+# Date: November-19-2024
+# Description: transfer_learning_greek.py
+
 import os
 import torch
 import torchvision

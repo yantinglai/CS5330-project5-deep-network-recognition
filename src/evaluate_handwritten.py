@@ -1,3 +1,8 @@
+# Yanting Lai
+# CS5330
+# Date: November-19-2024
+# Description: evaluate_handwritten.py
+
 import os
 import cv2
 import torch

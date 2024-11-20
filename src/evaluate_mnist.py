@@ -1,9 +1,14 @@
+# Yanting Lai
+# CS5330
+# Date: November-19-2024
+# Description: evaluate_mnist.py
+
 import os
 import torch
 import matplotlib.pyplot as plt
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-from model import MyNetwork  # Import your model class
+from model import MyNetwork
 
 
 def load_test_data():

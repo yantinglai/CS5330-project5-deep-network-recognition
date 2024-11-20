@@ -1,3 +1,6 @@
+# Yanting Lai
+# CS5330
+# Date: November-19-2024
 # train_mnist.py
 # Description: Train and save a PyTorch model for MNIST digit recognition with loss plots and visualization.
 

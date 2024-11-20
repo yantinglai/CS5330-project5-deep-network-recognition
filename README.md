@@ -73,7 +73,7 @@ Note: Make sure your webcam is properly connected before running the live recogn
    * Best results with clear, centered digits on white paper
 
 ## Time Travel Days
-* 2
+* 1
 
 ## Additional Notes
 * The model weights are saved in `src/model/mnist_model.pth`

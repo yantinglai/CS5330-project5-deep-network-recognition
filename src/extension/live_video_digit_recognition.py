@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import torch
 from torchvision import transforms
-from model import MyNetwork  # Replace with your trained model class
+from model import MyNetwork
 
 
 def load_model(model_path):
@@ -14,127 +14,158 @@ def load_model(model_path):
 
 
 def preprocess_roi(roi):
-    # Enhanced preprocessing pipeline
     transform = transforms.Compose([
         transforms.ToPILImage(),
         transforms.Grayscale(),
+        transforms.Pad(padding=4, fill=0),
         transforms.Resize((28, 28)),
-        # Add padding to help with thin digits like 1
-        transforms.Pad(padding=2, fill=0),
-        transforms.Resize((28, 28)),  # Resize back to expected input size
         transforms.ToTensor(),
-        # Adjust normalization values if needed
         transforms.Normalize((0.1307,), (0.3081,))
     ])
     return transform(roi).unsqueeze(0)
 
 
-def predict_digit(model, roi):
-    with torch.no_grad():
-        output = model(roi)
-        probabilities = torch.nn.functional.softmax(output, dim=1)
-        prob_value, predicted = torch.max(probabilities, 1)
-
-        # Only return prediction if confidence is high enough
-        if prob_value.item() > 0.7:  # Adjust confidence threshold as needed
-            return predicted.item(), prob_value.item()
-        return None, None
-
-
 def enhance_digit_region(roi):
-    # Apply advanced image processing to improve digit clarity
-    # Increase contrast
-    roi = cv2.convertScaleAbs(roi, alpha=1.5, beta=0)
+    # Enhance contrast for better digit visibility
+    roi = cv2.convertScaleAbs(roi, alpha=2.0, beta=10)
 
-    # Apply adaptive thresholding
+    # Adaptive thresholding with optimized parameters
     roi = cv2.adaptiveThreshold(
-        roi, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV, 11, 2
+        roi, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY_INV, 9, 5
     )
 
-    # Remove noise
+    # Careful noise reduction while preserving digit details
     kernel = np.ones((2, 2), np.uint8)
     roi = cv2.morphologyEx(roi, cv2.MORPH_OPEN, kernel)
-
-    # Fill holes
-    roi = cv2.morphologyEx(roi, cv2.MORPH_CLOSE, kernel)
+    roi = cv2.dilate(roi, kernel, iterations=1)
 
     return roi
 
 
-def detect_single_digit(frame, model):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+def sort_contours(contours, method="left-to-right"):
+    # Sort contours from left to right
+    reverse = False
+    i = 0
+    if method == "right-to-left" or method == "bottom-to-top":
+        reverse = True
+    if method == "top-to-bottom" or method == "bottom-to-top":
+        i = 1
 
-    # Enhanced edge detection
-    edges = cv2.Canny(blurred, 50, 150)
+    # Create bounding boxes and sort them
+    bounding_boxes = [cv2.boundingRect(c) for c in contours]
+    (contours, bounding_boxes) = zip(*sorted(zip(contours, bounding_boxes),
+                                             key=lambda b: b[1][i], reverse=reverse))
+
+    return contours
+
+
+def detect_multiple_digits(frame, model):
+    # Convert to grayscale
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    # Apply bilateral filter for noise reduction while preserving edges
+    blurred = cv2.bilateralFilter(gray, 9, 75, 75)
+
+    # Otsu's thresholding for robust binarization
+    _, binary = cv2.threshold(
+        blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # Edge detection
+    edges = cv2.Canny(binary, 30, 200)
 
     # Dilate edges to connect components
-    kernel = np.ones((3, 3), np.uint8)
+    kernel = np.ones((2, 2), np.uint8)
     dilated = cv2.dilate(edges, kernel, iterations=1)
 
     # Find contours
     contours, _ = cv2.findContours(
-        dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
+        dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    if contours:
-        # Filter contours by area and aspect ratio
-        valid_contours = []
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area < 100:  # Adjust minimum area as needed
-                continue
+    # Filter and sort valid contours
+    valid_contours = []
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < 80:  # Minimum area threshold
+            continue
 
+        x, y, w, h = cv2.boundingRect(contour)
+        aspect_ratio = float(w)/h
+
+        # Filter based on aspect ratio and size
+        if 0.15 < aspect_ratio < 1.2 and h > 20:  # Added minimum height check
+            valid_contours.append(contour)
+
+    # Sort contours left to right
+    if valid_contours:
+        valid_contours = sort_contours(valid_contours)
+
+        # Process each valid contour
+        detected_digits = []
+        for i, contour in enumerate(valid_contours):
             x, y, w, h = cv2.boundingRect(contour)
-            aspect_ratio = float(w)/h
 
-            # Filter based on aspect ratio (adjust ranges as needed)
-            if aspect_ratio > 0.2 and aspect_ratio < 1.0:
-                valid_contours.append(contour)
-
-        if valid_contours:
-            # Find the largest valid contour
-            largest_contour = max(valid_contours, key=cv2.contourArea)
-            x, y, w, h = cv2.boundingRect(largest_contour)
-
-            # Add padding around the digit
-            padding = 10
+            # Add padding around digit
+            padding = int(max(w, h) * 0.2)
             x_start = max(0, x - padding)
             y_start = max(0, y - padding)
             x_end = min(frame.shape[1], x + w + padding)
             y_end = min(frame.shape[0], y + h + padding)
 
-            # Extract ROI
+            # Extract and process ROI
             roi = gray[y_start:y_end, x_start:x_end]
 
-            # Enhance the digit region
-            roi_enhanced = enhance_digit_region(roi)
+            if roi.size > 0 and roi.shape[0] > 10 and roi.shape[1] > 10:
+                roi_enhanced = enhance_digit_region(roi)
 
-            # Show the enhanced ROI for debugging
-            cv2.imshow("Enhanced ROI", roi_enhanced)
+                # Show individual ROIs for debugging
+                cv2.imshow(f"ROI_{i}", roi_enhanced)
 
-            # Preprocess and predict
-            roi_tensor = preprocess_roi(roi_enhanced)
-            digit, confidence = predict_digit(model, roi_tensor)
+                roi_tensor = preprocess_roi(roi_enhanced)
 
-            if digit is not None:
-                # Draw bounding box
-                cv2.rectangle(frame, (x_start, y_start),
-                              (x_end, y_end), (0, 255, 0), 2)
+                # Predict digit with confidence check
+                with torch.no_grad():
+                    output = model(roi_tensor)
+                    probabilities = torch.nn.functional.softmax(output, dim=1)
+                    values, indices = torch.topk(probabilities, 2)
 
-                # Display prediction and confidence
-                text = f"{digit} ({confidence:.2f})"
-                cv2.putText(frame, text, (x_start, y_start - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+                    # Adjust confidence threshold based on digit
+                    predicted_digit = indices[0][0].item()
+                    confidence = values[0][0].item()
+
+                    # Different thresholds for different digits
+                    threshold = 0.5 if predicted_digit in [1, 4, 6, 7] else 0.7
+
+                    if confidence > threshold:
+                        # Store detection information
+                        detected_digits.append({
+                            'digit': predicted_digit,
+                            'confidence': confidence,
+                            'position': (x_start, y_start, x_end, y_end)
+                        })
+
+        # Draw all valid detections
+        for detection in detected_digits:
+            x_start, y_start, x_end, y_end = detection['position']
+            digit = detection['digit']
+            confidence = detection['confidence']
+
+            # Draw bounding box
+            cv2.rectangle(frame, (x_start, y_start),
+                          (x_end, y_end), (0, 255, 0), 2)
+
+            # Draw prediction and confidence
+            text = f"{digit} ({confidence:.2f})"
+            cv2.putText(frame, text, (x_start, y_start - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
 
     return frame
 
 
-def live_video_single_digit_recognition(model):
+def live_video_digit_recognition(model):
     cap = cv2.VideoCapture(0)
 
-    # Set camera properties for better quality
+    # Optimize camera settings
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
@@ -148,8 +179,8 @@ def live_video_single_digit_recognition(model):
         if not ret:
             break
 
-        processed_frame = detect_single_digit(frame, model)
-        cv2.imshow("Live Single Digit Recognition", processed_frame)
+        processed_frame = detect_multiple_digits(frame, model)
+        cv2.imshow("Multiple Digit Recognition", processed_frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
@@ -161,4 +192,4 @@ def live_video_single_digit_recognition(model):
 if __name__ == "__main__":
     model_path = "/Users/sundri/Desktop/CS5330/Project5/src/model/mnist_model.pth"
     model = load_model(model_path)
-    live_video_single_digit_recognition(model)
+    live_video_digit_recognition(model)
